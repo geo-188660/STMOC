@@ -1,76 +1,25 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Nov 11 11:12:21 2019
+Land-Use Data Loader (LUloader)
 
-@author: Yue
+Reference:
+    Adapted from https://github.com/codeRimoe/pSO/tree/main/pMOLU
+    (Luo & Huang, 2023 — A probabilistic framework with the gradient-based
+     method for multi-objective land use optimization. Int. J. Geogr. Inf. Sci.)
+
+This module provides utilities for loading, processing, and visualizing
+land-use data in both vector and raster formats.
 """
-#%%
 import os
 try:
     from osgeo import gdal
-except:
+except Exception:
     gdal = None
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-
-# lgend = ['Restrict', 'R1', 'R2', 'RC', 'C', 'CBD', 'IH',
-#          'I1', 'I2', 'A', 'E', 'G', 'U']
-# color = ['black', 'deeppink', 'lightpink', 'darkviolet',
-#          'royalblue', 'gold', 'lightseagreen', 'orange',
-#          'orangered', 'yellowgreen', 'forestgreen',
-#          'springgreen', 'lightgray', 'white']
-
-# def read_tif(filename, resample=1):
-#     ds = gdal.Open(filename)
-#     para = {'proj': ds.GetProjection(), 'tran': ds.GetGeoTransform(),
-#             'x': ds.RasterXSize, 'y': ds.RasterYSize}
-#     if resample is None:
-#         img = ds.ReadAsArray(0, 0, para['x'], para['y'])
-#     else:
-#         try:
-#             x, y = resample
-#             rx, ry = para['x'] * 1. / x, para['y'] * 1. / y
-#         except:
-#             rx, ry = resample, resample
-#             x, y = int(para['x'] / rx), int(para['y'] / ry)
-#         t = list(para['tran'])
-#         t[1], t[5] = t[1] * rx, t[5] * ry
-#         para['tran'] = t
-#         para['x'], para['y'] = x, y
-#         img = ds.ReadAsArray(0, 0, buf_xsize=para['x'], buf_ysize=para['y'])
-#     para['img'] = img
-#     return para
-
-# def write_tif(filename, img, para, dtype=gdal.GDT_Byte):
-#     ds = gdal.GetDriverByName('GTiff').Create(filename, para['x'], para['y'], 1, dtype)
-#     ds.SetProjection(para['proj'])
-#     ds.SetGeoTransform(para['tran'])
-#     ds.GetRasterBand(1).WriteArray(img)
-#     ds = None
-#     print(f'Saved: {filename}')
-
-def read_raster(filename, driver='TIF', resample=1, mask=None):
-    if driver == 'TIF':
-        raster = read_tif(filename, resample)
-    elif driver == 'NPY':
-        raster = {'img': np.load(filename)}
-        # TODO: resample
-    elif driver == 'MAT':
-        # TODO: add mat loader
-        print(f'MAT will be supported in the future.')
-        return
-    else:
-        print(f'No driver {driver} is founded.')
-        return
-    raster['mask'] = mask
-    return raster
-
-def write_raster(filename, img, para, driver='TIF'):
-    if driver == 'TIF':
-        write_tif(filename, img, para)
 
 class LUloader:
     '''
@@ -155,7 +104,7 @@ class LUloader:
         name = os.path.join(self.path, name)
         self.var['opt'] = optLU
         if driver == 'feather':
-            self.var.to_feather(f'name.feather')
+            self.var.to_feather(f'{name}.feather')
         self.var.to_file(name, driver=driver, encoding=encoding)
 
     def save_raster(self, name, optLU=None, driver='TIF'):
@@ -210,7 +159,7 @@ class LUloader:
         try:
             cmap = ListedColormap(self.cmap)
         except:
-            # print('Use default colormap.')
+            print('Use default colormap.')
             cmap = None
         # if legend is None:
         #     print('Use default legend.')

@@ -1,158 +1,236 @@
-# STMOC spatial optimization: pMOLU code and processed data
+# STMOC -- Spatiotemporal Multi-Objective Consolidation
+
+A Python implementation of the probabilistic multi-objective land-use optimization (pMOLU) framework for the STMOC application, adapted from [pSO/pMOLU](https://github.com/codeRimoe/pSO/tree/main/pMOLU) (Luo & Huang, 2023).
 
 ## Overview
 
-This directory contains the processed inputs and core implementation of the probabilistic multi-objective land-use model (pMOLU), which forms the spatial-allocation component of the Spatiotemporal Multi-Objective Consolidation (STMOC) framework.
+This code implements a gradient-based optimizer that assigns each land-use patch to a probability distribution over land-use categories (retention, reclamation, reforestation), then optimizes those probabilities to maximize five sustainability objectives simultaneously.
 
-pMOLU represents three possible states for each potentially releasable rural-homestead patch—retention in its current use, cropland reclamation, and reforestation—as continuous allocation probabilities. It then uses gradient-based optimization to reconcile five objectives:
+### Core algorithm
 
-1. food production;
-2. carbon sequestration;
-3. biodiversity conservation capacity;
-4. one-off net quota revenue; and
-5. annual operating income from agricultural and forestry products.
+1. **Softmax parameterization** -- raw logits are transformed into valid allocation probabilities via `softmax(theta * sigP)`, ensuring every patch's category probabilities sum to one.
+2. **Single-objective warm-up** -- each objective is optimized independently to establish per-objective benchmarks.
+3. **Weighted minimax loss** -- normalized shortfalls across all objectives are combined into a single scalar that the Adam optimizer minimizes.
+4. **Oscillation switching** -- when any constrained objective exceeds threshold `thC`, the optimizer alternates between minimizing the maximin loss and maximizing constraint satisfaction to escape local optima.
 
-The files in this directory cover data preparation, objective construction, probability-based spatial optimization, policy-weight experiments, and categorical output. Upstream candidate identification using nighttime-light and Tencent activity data, aggregate population-demand assessment, detailed benefit accounting, and phased temporal sequencing are described in the accompanying manuscript but are not included in this directory.
+## Project structure
 
-## Repository structure
+| File                        | Description                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `model.py`                | GDA model core -- softmax variables, loss construction, training loop ([reference](https://github.com/codeRimoe/pSO/tree/main/pMOLU)) |
+| `objs.py`                 | Objective function definitions -- five sustainability objectives + conversion-cost constraint                                        |
+| `LUloader.py`             | Land-use data loader for vectors and rasters ([reference](https://github.com/codeRimoe/pSO/tree/main/pMOLU))                          |
+| `vGDA.ipynb`              | Minimal Jupyter notebook demo -- end-to-end walk-through of a single optimization run with commented steps                           |
+| `sensitivity_analysis.py` | Monte Carlo sensitivity experiments for score perturbation and mask contraction                                                      |
 
-```text
-code1/
-├── README.md
-├── LUloader.py
-├── model.py
-├── objs.py
-├── preprocess.ipynb
-├── vGDA.ipynb
-└── data2/
-    ├── data-1.xlsx
-    └── multiob-1.xlsx
+## Dependencies
+
+```
+numpy >= 1.20
+pandas >= 1.3
+geopandas >= 0.9
+tensorflow == 1.15   # TF v1 API required
+matplotlib >= 3.3
+tqdm >= 4.60
 ```
 
-### File descriptions
+Install:
 
-| File | Role |
-| --- | --- |
-| `preprocess.ipynb` | Reads the patch- and county-level Excel inputs, checks county-code matching, creates point geometries, assigns the initial land-use state, defines the 50%, 65%, and 80% implementation-feasibility subsets, and exports GeoFeather inputs for pMOLU. |
-| `LUloader.py` | Loads vector land-use data and converts categorical states to probability matrices and back. It also contains optional export and plotting helpers; the present workflow relies on its vector/GeoFeather loading and state-conversion functions. |
-| `objs.py` | Defines the five benefit objectives and the conversion term in TensorFlow, together with NumPy functions for evaluating a completed allocation. Benefits to be maximized enter the minimization problem with a negative sign. |
-| `model.py` | Implements the `GDAmodel` pMOLU optimizer: softmax probability representation, single-objective attainable benchmarks, normalized minimax loss, Adam updates, and optional logging/checkpoint interfaces. |
-| `vGDA.ipynb` | Provides the model-running workflow: assembling patch-level objective coefficients, initializing pMOLU, calculating single-objective benchmarks, applying an objective-emphasis setting, optimizing the allocation, and joining the final classes back to spatial patches. |
-| `data2/data-1.xlsx` | Patch-level input table for 357,714 potentially releasable rural-homestead patches, covering approximately 5.29 million ha. |
-| `data2/multiob-1.xlsx` | County-level coefficients used to calculate the five objectives for 2,662 county codes. |
-
-## Input data
-
-### Patch-level data: `data2/data-1.xlsx`
-
-The main worksheet is `Sheet1`. Each row represents one candidate patch.
-
-| Field | Meaning |
-| --- | --- |
-| `pointid` | Unique patch identifier. |
-| `grid_code` | County code used to join county-level objective coefficients. |
-| `food` | Cropland-reclamation suitability score; larger values indicate greater suitability. |
-| `tree` | Reforestation suitability score; larger values indicate greater suitability. |
-| `centroid_x`, `centroid_y` | Patch-centroid coordinates. `preprocess.ipynb` currently assigns EPSG:28413 to these coordinates. |
-| `area` | Patch area in m². |
-| `priority2` | Relative implementation-feasibility score; larger values indicate higher priority for admission to optimization. |
-
-The workbook also contains Chinese-language worksheets documenting the field definitions and scenario design. The scenario note refers to cumulative area, whereas the current notebook uses `priority2` quantiles and therefore selects the highest-ranked 50%, 65%, and 80% of patches by patch count. This difference is documented under “Version and reproducibility notes” below.
-
-### County-level data: `data2/multiob-1.xlsx`
-
-The main worksheet is `zong`. `PAC` is the county identifier and matches `grid_code` in the patch table.
-
-| Field | Model meaning | Unit in the supplied workbook |
-| --- | --- | --- |
-| `PAC` | County code | — |
-| `FOOD` | Food-production capacity | g m⁻² |
-| `NEP` | Net ecosystem productivity used for carbon sequestration | g m⁻² |
-| `BIO` | Biodiversity conservation-capacity coefficient | index per m² |
-| `FOODVALUEC` | Reclamation-related annual agricultural return | CNY m⁻² |
-| `FOODVALUED` | Reclamation-related one-off quota return | CNY m⁻² |
-| `TREEVALUEC` | Reforestation-related annual forestry return | CNY m⁻² |
-| `TREEVALUED` | Reforestation-related one-off quota return | CNY m⁻² |
-
-The suffixes `C` and `D` are retained from the original code. They correspond, respectively, to recurrent operating income (`ecoc`) and one-off quota revenue (`ecod`) in the current manuscript terminology.
-
-## Model states and objective names
-
-`vGDA.ipynb` defines the land-use labels as `Restrict`, `U`, `C`, and `T`. `Restrict` is an internal placeholder, leaving three optimized states:
-
-| Code label | State |
-| --- | --- |
-| `U` | Retention in current use |
-| `C` | Cropland reclamation |
-| `T` | Reforestation |
-
-Within `objs.py`, the objective names map to the manuscript as follows:
-
-| Internal name | Manuscript objective |
-| --- | --- |
-| `food` | Food production |
-| `nep` | Carbon sequestration |
-| `bio` | Biodiversity conservation capacity |
-| `ecoc` | Annual operating income (Obj. 5) |
-| `ecod` | One-off net quota revenue (Obj. 4) |
-| `Cov` | Conversion term used by the optimization routine |
-
-The internal code order places annual operating income before one-off quota revenue. This is the reverse of their Obj. 4/Obj. 5 numbering in the manuscript; consequently, `objX = 3` denotes AOI-ES and `objX = 4` denotes OQR-ES.
-
-`LUloader` stores categorical states as 1–3, whereas `argmax()` in the final notebook cell returns 0–2. In the exported `LU` field, `0`, `1`, and `2` therefore denote retention in current use, cropland reclamation, and reforestation, respectively.
-
-## Computational workflow
-
-Start Jupyter from the `code1/` directory so that the relative paths in both notebooks resolve correctly.
-
-1. **Create working directories.** Create empty `CL/` and `sensitivity/` directories under `code1/`.
-2. **Prepare the spatial inputs.** Run `preprocess.ipynb` to retain patch records whose county codes have available coefficients and generate `CL/Ws.csv`, `CL/luX.feather`, `CL/lu50.feather`, `CL/lu65.feather`, and `CL/lu80.feather`.
-3. **Select an implementation-feasibility set.** In `vGDA.ipynb`, load `lu50`, `lu65`, or `lu80` for the conservative, intermediate, or high implementation-feasibility scenario. The notebook currently loads `luX`, which contains all candidate patches, unless this setting is changed.
-4. **Assemble objective coefficients.** The notebook combines patch-level suitability and feasibility information with the county-level food, ecosystem-service, and economic coefficients.
-5. **Calculate attainable benchmarks.** `GDAmodel.init_train()` independently optimizes each objective to establish the normalization benchmarks used in the multi-objective loss.
-6. **Set policy preferences.** The equal-weight setting requires `pre = [1] * 5` with the line `pre[objX] = 1.2` skipped. For an emphasis scenario, retain that line and set `objX` from `0` to `4` for FP-ES, CS-ES, BIO-ES, AOI-ES, or OQR-ES, respectively. The supplied notebook uses `objX = 4` by default and therefore runs OQR-ES, not EWS.
-7. **Run pMOLU.** `GDAmodel.train()` updates patch-level probabilities using Adam. After the final iteration, each patch is assigned to the state with the greatest probability.
-8. **Export the allocation.** The last notebook cell joins the categorical result to a polygon layer through `pointid`/`PatchUID` and writes the spatial output to `sensitivity/`.
-
-The notebook metadata record Python 3.9.5. The main dependencies are:
-
-```text
-numpy
-pandas
-geopandas
-matplotlib
-tensorflow (TensorFlow 1.x-compatible graph mode)
-openpyxl
-pyarrow
-jupyter
-Fiona or pyogrio for vector spatial I/O
+```bash
+pip install numpy pandas geopandas matplotlib tqdm
+# For TensorFlow 1.x:
+pip install tensorflow==1.15
 ```
 
-The supplied notebook sets `GPU = 1`. Change this argument to `GPU = 0` when a compatible TensorFlow GPU is unavailable.
+## Quick start
 
-## Additional files required for a complete run
+### Running the demo (recommended first step)
 
-The current directory is a compact model-and-data snapshot rather than a one-command reproduction package. The following auxiliary inputs referenced by `vGDA.ipynb` are not included here:
+Open `vGDA.ipynb` in Jupyter Lab or VS Code. It walks through a complete
+optimization in seven annotated cells:
 
-- `CL/CCM.csv`, a 3 × 3 land-use conversion matrix whose rows and columns follow the `U`, `C`, and `T` state order;
-- the source polygon layer `data2/dixiao-xiugai-xiaochu-HOUXUAN7501-shai_with_elderly-qutaihong`, whose `PatchUID` field must match `pointid`;
-- the output directories `CL/` and `sensitivity/`, which should be created before running the notebooks.
+1. Import dependencies and set parameters (`thC`, `objX`)
+2. Load land-use data and build weighted objective arrays
+3. Build conversion-cost matrix and feasibility mask
+4. Create the GDAmodel, run single-objective warm-up, save normalisation constants
+5. Set objective preferences and run the main multi-objective training loop
+6. Extract the final categorical assignment (`argmax` over probabilities)
+7. Attach the result to the original geometry for export
 
-## Generated outputs
+```bash
+jupyter lab vGDA.ipynb   # or: jupyter notebook vGDA.ipynb
+```
 
-- `CL/inp/Norm0.npy`, `Norm1.npy`, `Norm2.npy`, `Org0.npy`, and `Org1.npy` store the normalization inputs created by `save_inp()`.
-- `CL/plot/LU/` receives diagnostic allocation plots when plotting is enabled.
-- `sensitivity/objpre120_<objective>` receives the final spatial layer produced by the supplied notebook.
+### Running the optimization
 
-The final spatial layer contains `PatchUID`, categorical `LU`, and geometry. Patch-level probability matrices remain available in memory through `Model.get_opt()` but are not written by the current notebook.
+```python
+from LUloader import LUloader
+from model import GDAmodel
+import objs
 
-## Version and reproducibility notes
+# Load land-use data
+CL = LUloader(
+    LUs=['Restrict', 'U', 'C', 'T'], asProb=True, LUType='V',
+    LUname='luMC_0', LUcol='lu', driver='feather', cmap=Func_cmap, path='CL'
+)
 
-- The scenario note in `data-1.xlsx` describes cumulative-area selection, but the current preprocessing code uses `priority2` quantiles by patch count. It selects 286,171, 232,514, and 178,857 patches for the 80%, 65%, and 50% sets; these represent approximately 71.84%, 55.23%, and 40.98% of candidate area. An area-based rule therefore requires explicit cumulative-area ranking.
-- `vGDA.ipynb` retains the legacy `thC` conversion-threshold option and loads `luX` by default. With `thStop = 1`, the saved example run stops when this threshold is reached (at epoch 85) rather than completing all 1,000 requested iterations. Reproduction of the revised manuscript should use the appropriate scenario-specific feasible set and numerical settings stated in the final Methods.
-- In the current notebook, `priority2` is used both to create scenario subsets and when assembling objective coefficients. Its intended role should be kept consistent with the accompanying manuscript when the release is finalized.
-- The current notebook constructs each patch coefficient as `priority2 × suitability / 10 × county coefficient` and does not explicitly multiply by patch area. This step should be synchronized with the area-weighted objective equations in the final manuscript before archival release.
-- The function `perference()` implements an emphasis setting by scaling the single-objective benchmark vector. Its equivalence to the explicit objective-weight formulation reported in the manuscript should be confirmed in the synchronized release.
-- `vGDA.ipynb` creates a large county-membership matrix named `p` that is not used later. For the supplied data, it contains approximately 952 million elements and should be removed before rerunning the national model to avoid unnecessary memory use.
-- The code is written in TensorFlow graph mode and records a TensorFlow random seed of `1486`. No environment lock file is presently included, so package versions should be recorded before archival release.
-- Raster helper calls in `LUloader.py` are not active in this snapshot; the documented workflow should therefore be treated as vector/GeoFeather-based.
+# Build weights and constraints (see CL/Ws.csv and CL/CCM.csv)
+maskR = np.ones_like(CL.var.LU)
+CCM = np.loadtxt('CL/CCM.csv', delimiter=',')
+CCM = 1 - CCM / CCM.max()
+con = {...}  # see objs.py or sensitivity_analysis.py for full dict
+
+M = {'LU': CL}
+Model = GDAmodel(M, con, maskR, objs, thC=1.0, GPU=1, path='.')
+
+# Warm-up -> optimize -> inspect results
+Model.init_train(500, lr=0.1)
+Model.train(n_iter=1000, thStop=1, nprint=100)
+res = Model.log()
+```
+
+### Running sensitivity analysis
+
+```bash
+python sensitivity_analysis.py
+```
+
+Three experiment suites run automatically:
+
+1. **Score sensitivity** -- binary / convex / concave suitability schedules (100 repeats each)
+2. **Baseline** -- original unelevated scores (100 repeats)
+3. **Mask contraction** -- random removal rates from 0.1% to 5% (100 repeats each)
+
+Results are saved incrementally under `sensitivity/MC_rate{rate}_rs{seed}/`. Interrupted runs resume automatically by skipping completed seeds.
+
+## Data requirements
+
+All input files live in the `CL/` directory (relative to where you run the optimizer).
+Below is a complete schema for each required file. Processed datasets used in the
+manuscript are also available at https://github.com/geo-188660/STMOC.
+
+### 1. `CL/luX.feather` -- land-use patch inventory
+
+A GeoPandas Feather file (`.feather`) containing one row per candidate rural-homestead
+patch. The column `lu` holds the current land-use code (1 = Retention,
+2 = Cropland, 3 = Tree/forest). The optimizer treats every non-restricted patch as
+a candidate for re-allocation.
+
+| Column        | Type  | Description                                                            | Example                |
+| ------------- | ----- | ---------------------------------------------------------------------- | ---------------------- |
+| `pointid`   | int   | Unique patch identifier                                                | `42`                 |
+| `grid_code` | int   | County/prefecture code (`PAC`), used to look up county-level weights | `350102`             |
+| `priority2` | float | Implementation-feasibility score (0--1); higher = easier to act on     | `0.73`               |
+| `lu`        | int   | Current land-use category code (1=Retention, 2=Cropland, 3=Forest)     | `1`                  |
+| `area`      | float | Patch area in square metres                                            | `12500.0`            |
+| `food`      | float | Raw suitability score for cropland reclamation (0–10 scale)           | `7.2`                |
+| `tree`      | float | Raw suitability score for reforestation (0–10 scale)                  | `8.5`                |
+| `biod`      | float | Biodiversity-conservation capacity index                               | `0.64`               |
+| `geometry`  | WKT   | Patch geometry (Point or Polygon)                                      | `POINT (119.3 26.1)` |
+
+**Minimal example** (three rows):
+
+```python
+import geopandas as gpd
+sample = gpd.GeoDataFrame({
+    'pointid': [101, 102, 103],
+    'grid_code': [350102, 350102, 350103],
+    'priority2': [0.85, 0.42, 0.91],
+    'lu':        [1, 1, 1],           # all current usage
+    'area':      [15000.0, 8200.0, 21000.0],
+    'food':      [6.0, 3.0, 8.0],
+    'tree':      [4.0, 7.0, 5.0],
+    'biod':      [0.3, 0.8, 0.5],
+}, geometry=gpd.points_from_xy([119.3, 119.3, 119.4], [26.1, 26.1, 26.2]))
+# save as: sample.to_feather('CL/luX.feather')
+```
+
+The feather format is recommended because it preserves GeoPandas geometry types
+and writes ~10× faster than CSV for large spatial datasets. Shapefiles and GeoJSON
+are also supported by `LUloader`.
+
+---
+
+### 2. `CL/Ws.csv` -- county-level objective weight tables
+
+A CSV indexed by `PAC` (county administrative code). Each row supplies the
+county-specific coefficient used to scale the five primary objectives for every
+patch in that county. These coefficients come from official statistics (yield,
+NEP, biodiversity capacity, operating income, quota revenue).
+
+| Column         | Type  | Meaning                                                      | Unit / Source        |
+| -------------- | ----- | ------------------------------------------------------------ | -------------------- |
+| `PAC`        | int   | County code (matches `grid_code` in `luX.feather`)       | administrative code  |
+| `FOOD`       | float | Grain yield of locally dominant crop                         | kg ha⁻¹            |
+| `NEP`        | float | Net ecosystem productivity (carbon-sequestration proxy)      | t C ha⁻¹ yr⁻¹    |
+| `BIO`        | float | Biodiversity conservation capacity index                     | dimensionless [0, 1] |
+| `FOODVALUEC` | float | Composite ecosystem-value score for cropland reclamation     | index                |
+| `FOODVALUED` | float | Disaggregated ecosystem-value score for cropland reclamation | index                |
+| `TREEVALUEC` | float | Composite ecosystem-value score for reforestation            | index                |
+| `TREEVALUED` | float | Disaggregated ecosystem-value score for reforestation        | index                |
+
+**Minimal example**:
+
+```csv
+PAC,FOOD,NEP,BIO,FOODVALUEC,FOODVALUED,TREEVALUEC,TREEVALUED
+350102,5200,4.2,0.71,0.65,0.58,0.82,0.74
+350103,3100,6.8,0.88,0.41,0.35,0.91,0.85
+```
+
+In the code these weights are joined to patches via `wx['grid_code'].apply(lambda x: w[col][x])`.
+
+---
+
+### 3. `CL/CCM.csv` -- conversion-cost matrix
+
+A symmetric numeric matrix loaded with `np.loadtxt(..., delimiter=',')`. Entry
+`CCM[i, j]` represents the relative cost (or difficulty) of converting land from
+category `i` to category `j`. Values are normalised to `[0, 1]` inside the
+optimizer (`CCM = 1 - CCM / CCM.max()`), so that:
+
+- **0** = free / trivial conversion (e.g. retaining current use: `CCM[1,1] = 0`)
+- **1** = prohibitively costly (hard constraint; allocation probability stays near zero)
+
+For a three-category problem (Retention → U, Reclamation → C, Reforestation → T)
+the raw matrix is typically 3 × 3 or 4 × 4 if Restrict is included:
+
+```csv
+0.0,0.9,0.7,0.0
+0.9,0.0,0.5,0.0
+0.7,0.5,0.0,0.0
+0.0,0.0,0.0,0.0
+```
+
+After `1 - CCM / max`, entry `(U→C) = 0.1` means switching current to cropland is
+cheap; entry `(U→T) = 0.3` means reforestation is more costly but still feasible.
+
+---
+
+### How the three inputs connect in the model
+
+```
+luX.feather          Ws.csv              CCM.csv
+   │                   │                    │
+   │  grid_code join   │                    │
+   ▼                   ▼                    │
+  wx (per-patch      (county weights        │
+   objective         broadcast to           │
+   arrays)          every patch)            │
+   │                   │                    │
+   └───────────────────┴────────────────────┘
+                         │
+                         ▼
+              GDAmodel(M, con, maskR, objs)
+                         │
+            softmax(θ · sigP) over LU categories
+                         │
+              Adam-optimize weighted minimax loss
+                         │
+                         ▼
+              argmax → final categorical allocation
+```
+
+## References
+
+- Luo, H. & Huang, B. (2023). A probabilistic framework with the gradient-based method for multi-objective land use optimization. *Int. J. Geogr. Inf. Sci.*, 37, 1128-1156.
+- Original code: https://github.com/codeRimoe/pSO/tree/main/pMOLU

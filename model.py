@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Nov 11 11:12:21 2019
-MOLU model for GA and pMOLU model for GDA
-A probabilistic framework based on the gradient descent algorithm for multi-objective land use optimization
-usage:
-GAmodel
+Probabilistic Multi-Objective Land-Use Optimization (pMOLU) model.
 
+Reference:
+    Adapted from https://github.com/codeRimoe/pSO/tree/main/pMOLU
+    (Luo & Huang, 2023 — A probabilistic framework with the gradient-based
+     method for multi-objective land use optimization. Int. J. Geogr. Inf. Sci.)
+
+This module implements the core GDA (Gradient Descent Architecture) model
+for the STMOC application. The algorithm uses softmax-parameterized
+continuous probabilities to replace discrete land-use decisions, enabling
+gradient-based optimization of multiple objectives simultaneously.
 """
 import os
 import numpy as np
@@ -13,6 +18,8 @@ import pandas as pd
 try:
     import tensorflow.compat.v1 as tf
     tf.disable_v2_behavior()
+    tf.get_logger().setLevel('ERROR')
+    tf.debugging.set_log_device_placement(False)
 except ModuleNotFoundError:
     import tensorflow as tf
 
@@ -55,7 +62,7 @@ class GDAmodel:
 
         config = tf.ConfigProto(intra_op_parallelism_threads=4,
                                 allow_soft_placement=True,
-                                log_device_placement=True,
+                                log_device_placement=False,
                                 device_count = {'CPU' : 1, 'GPU' : GPU})
         if GPU != 0:
             config.gpu_options.allow_growth = True
